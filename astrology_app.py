@@ -742,7 +742,7 @@ def plot_radar_chart(final_scores, average_scores, language):
 languages = ["Tiếng Việt", "English"]
 
 # Thiết lập mặc định English
-default_language = "Tiếng Việt"
+default_language = "English"
 
 # Cho phép người dùng chọn ngôn ngữ
 language = st.sidebar.selectbox("Chọn ngôn ngữ / Language settings", languages, index=languages.index(default_language))
