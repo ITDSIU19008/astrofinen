@@ -22,6 +22,11 @@ import geopy
 from sklearn.preprocessing import MinMaxScaler
 from unidecode import unidecode
 import base64
+import streamlit.components.v1 as components
+
+with open("google_analytics.html", "r") as f:
+    html_code = f.read()
+    components.html(html_code, height=0)
 
 # Đường dẫn tương đối tới thư mục ephemeris (trong cùng thư mục với file Python chính)
 relative_ephe_path = os.path.join(os.path.dirname(__file__), 'sweph')
@@ -1089,31 +1094,65 @@ def prepare_necessary_info(necessary_df, eligible_df):
 
     return necessary_info
 
-
 def generate_recommendation_for_eligible(eligible_df, final_scores, language, age, product_hierarchy):
     # Tạo template từ file
     prompt_template = load_prompt_from_file('product_prompt_template.txt')
 
     # Tập hợp tất cả các sản phẩm con
-    child_products = set(
-        product for products in product_hierarchy.values() for product in products
-    )
+    child_products = set(product for products in product_hierarchy.values() for product in products)
 
-    # Chuẩn bị danh sách sản phẩm mở rộng
-    eligible_info = prepare_eligible_info(eligible_df, language, product_hierarchy)
+    # Lấy danh sách top 10 sản phẩm theo điểm
+    top_10_eligible = eligible_df.nlargest(10, 'Score')
 
-    top_5_eligible = eligible_df
+    # Kiểm tra nếu sản phẩm mẹ nằm trong top 10
+    parent_in_top_10 = set(top_10_eligible['Product']).intersection(product_hierarchy.keys())
+
+    # Lọc ra các sản phẩm con nằm trong top 5 và có nhãn phù hợp
+    child_products_in_top_5 = top_10_eligible[
+        (top_10_eligible['Product'].isin(child_products)) &
+        (top_10_eligible['Label'].isin([
+            "Rất phù hợp", "Phù hợp", "Very Suitable", "Suitable", 
+            "Cần thiết - Rất phù hợp", "Cần thiết - Phù hợp", 
+            "Necessary - Very Suitable", "Necessary - Suitable"
+        ]))
+    ]
+
+    # Nếu sản phẩm mẹ nằm trong top 10 và có ít nhất 3 sản phẩm con trong top 5
+    if parent_in_top_10 and len(child_products_in_top_5) >= 3:
+        # Loại bỏ tất cả các sản phẩm con khỏi top 5
+        top_5_eligible = top_10_eligible[~top_10_eligible['Product'].isin(child_products)].nlargest(5, 'Score')
+    else:
+        # Lấy top 5 theo điểm nếu không cần loại bỏ sản phẩm con
+        top_5_eligible = top_10_eligible.nlargest(5, 'Score')
+
     # Kiểm tra nếu sản phẩm mẹ nằm trong top 5
     parent_in_top_5 = set(top_5_eligible['Product']).intersection(product_hierarchy.keys())
 
-    # Loại bỏ các sản phẩm con khỏi top 5 nếu sản phẩm mẹ đã có trong top 5
-    if parent_in_top_5:
-        top_5_eligible = top_5_eligible[~top_5_eligible['Product'].isin(child_products)]
-    else:
-        top_5_eligible = eligible_df.nlargest(5, 'Score')
+    # Nếu sản phẩm mẹ trong top 5, liệt kê sản phẩm con dưới mẹ
+    eligible_info = ""
+    for _, row in top_5_eligible.iterrows():
+        product = row['Product']
+        product_name = get_product_name(product, language)
+        label = row['Label']
+        link = f"https://timo.vn/product/{product}" if language == "Tiếng Việt" else f"https://timo.vn/en/{product}"
 
-    # top_5_eligible = eligible_df[~eligible_df['Product'].isin(child_products)]
-    # top_5_eligible = top_5_eligible.nlargest(5, 'Score')
+        eligible_info += f"**{product_name}** - {label}\n"
+        eligible_info += f"_Bạn có thể tìm hiểu thêm tại [Link]({link})_\n"
+
+        # Nếu sản phẩm là mẹ, liệt kê các sản phẩm con theo điểm
+        if product in product_hierarchy:
+            eligible_info += "  **Sản phẩm này bao gồm:**\n"
+            child_df = eligible_df[
+                (eligible_df['Product'].isin(product_hierarchy[product])) &
+                (eligible_df['Label'].isin(["Rất phù hợp", "Phù hợp", "Very Suitable", "Suitable"]))
+            ].sort_values(by='Score', ascending=False)
+
+            for _, child_row in child_df.iterrows():
+                child_name = get_product_name(child_row['Product'], language)
+                child_label = child_row['Label']
+                eligible_info += f"    - {child_name}: {child_label}\n"
+
+        eligible_info += "\n"  # Thêm khoảng trắng giữa các sản phẩm
 
     # Chuẩn bị danh sách top 5 sản phẩm để hiển thị
     top_5_eligible_info = "\n".join([
@@ -1124,7 +1163,7 @@ def generate_recommendation_for_eligible(eligible_df, final_scores, language, ag
     # Chuẩn bị thông tin về traits
     traits_info = []
     for trait, score in final_scores.items():
-        result = determine_score_level_and_description(trait, score)  # Trả về (level, description)
+        result = determine_score_level_and_description(trait, score)
         if isinstance(result, tuple) and len(result) == 2:
             level, description = result
             traits_info.append(f"Trait: {trait}, Score: {score} ({level}) - {description}")
@@ -1146,6 +1185,7 @@ def generate_recommendation_for_eligible(eligible_df, final_scores, language, ag
 
     # Gọi hàm GPT để sinh nội dung từ prompt
     return generate_content_with_gpt(prompt)
+
 
 
 
@@ -1426,6 +1466,22 @@ if "calculate_pressed" not in st.session_state:
 # ----------------------------Streamlit UI---------------------------------------------
 
 # Streamlit UI
+if language == "Tiếng Việt":
+    banner_url = "https://timo.vn/wp-content/uploads/2024/10/AstroTomi_Email-banner_VN.jpg"
+else:
+    banner_url = "https://timo.vn/wp-content/uploads/2024/10/AstroTomi_Email-banner_ENG.jpg"
+
+# CSS để điều chỉnh khoảng cách giữa banner và nội dung
+st.markdown(
+    f"""
+    <div style="text-align: center; margin-bottom: 50px;">
+        <img src="{banner_url}" 
+             alt="AstroTomi Header" style="width:100%; max-width:700px; object-fit: cover;">
+    </div>
+    """,
+    unsafe_allow_html=True
+)
+
 st.markdown(
     """
     <style>
@@ -1442,6 +1498,10 @@ st.markdown(
         -webkit-background-clip: text;
         color: transparent;
         margin: 0 10px;
+        margin-bottom: -40px; /* Giảm khoảng cách giữa tiêu đề và expander */
+    }
+    .expander {
+        margin-top: -30px; /* Điều chỉnh khoảng cách phía trên của expander */
     }
     .beta {
         font-size: 20px;
@@ -1453,7 +1513,7 @@ st.markdown(
         display: flex;
         justify-content: center;
         align-items: center;
-        # margin-bottom: 100px; /* Điều chỉnh khoảng cách giữa tiêu đề và tab */
+        # margin-bottom: 80px; /* Điều chỉnh khoảng cách giữa tiêu đề và tab */
     }
 
     /* Điều chỉnh khoảng cách tab */
@@ -1914,12 +1974,12 @@ if st.button(f"✨ {calculate_button_label} ✨"):
             # tab1, tab2, tab3, tab4 = st.tabs(["Astrology", "Financial Traits", "Product Recommendations", "Rating"])
             # Thay đổi tên các tab theo ngôn ngữ
             if language == "Tiếng Việt":
-                tab_titles = ["Tính Cách Tài Chính", "Đánh giá"]
+                tab_titles = ["Tính Cách Tài Chính", "✨Đánh giá✨"]
                 # rating_label = "Đánh giá ứng dụng từ 1 đến 5 sao"
                 # comment_label = "Bình luận về ứng dụng"
                 feedback_message = "### Hãy giúp Tomi chọn mức độ hài lòng mà bạn cảm thấy khi trải nghiệm bản beta của ASTROTOMI nha!"
             else:
-                tab_titles = ["Financial Traits", "Feedback"]
+                tab_titles = ["Financial Traits", "✨Feedback✨"]
                 # rating_label = "Rate the app from 1 to 5 stars"
                 # comment_label = "Comment on the app"
                 feedback_message = "### Please help Tomi select how you feel about the ASTROTOMI beta experience!"
@@ -2159,7 +2219,9 @@ if st.button(f"✨ {calculate_button_label} ✨"):
                         sticker_1 = base64.b64encode(open(sticker_1_path, "rb").read()).decode()
                         sticker_2 = base64.b64encode(open(sticker_2_path, "rb").read()).decode()
                         sticker_3 = base64.b64encode(open(sticker_3_path, "rb").read()).decode()
-
+                        
+                        st.write("                         ")
+                        st.write("### Đánh Giá" if language == "Tiếng Việt" else "### Feedback")
                         # Tab Đánh giá
                         with st.expander(feedback_message, expanded=True):
                             st.markdown(
@@ -2359,7 +2421,10 @@ if st.button(f"✨ {calculate_button_label} ✨"):
                         sticker_1 = base64.b64encode(open(sticker_1_path, "rb").read()).decode()
                         sticker_2 = base64.b64encode(open(sticker_2_path, "rb").read()).decode()
                         sticker_3 = base64.b64encode(open(sticker_3_path, "rb").read()).decode()
-
+                        
+                        st.write("                         ")
+                        st.write("### Đánh Giá" if language == "Tiếng Việt" else "### Feedback")
+                        
                         # Tab Đánh giá
                         with st.expander(feedback_message, expanded=True):
                             st.markdown(
@@ -2695,6 +2760,8 @@ st.sidebar.markdown(
     """,
     unsafe_allow_html=True
 )
+
+
 
 
 # # Hàm kiểm tra đăng nhập admin
