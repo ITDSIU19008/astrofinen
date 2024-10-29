@@ -22,11 +22,7 @@ import geopy
 from sklearn.preprocessing import MinMaxScaler
 from unidecode import unidecode
 import base64
-import streamlit.components.v1 as components
 
-with open("google_analytics.html", "r") as f:
-    html_code = f.read()
-    components.html(html_code, height=0)
 
 # Đường dẫn tương đối tới thư mục ephemeris (trong cùng thư mục với file Python chính)
 relative_ephe_path = os.path.join(os.path.dirname(__file__), 'sweph')
