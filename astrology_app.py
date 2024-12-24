@@ -2,7 +2,7 @@ import streamlit as st
 
 
 # Create a select box for language selection in the sidebar
-language = st.sidebar.selectbox("Select Language:", ["Tiếng Việt", "English"], index=0)
+language = st.sidebar.selectbox("Select Language:", ["Tiếng Việt", "English"], index=1)
 
 # Check the selected language and display the respective link and quote
 if language == "English":
